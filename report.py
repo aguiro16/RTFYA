@@ -1,0 +1,200 @@
+import anthropic
+from datetime import datetime, date, timedelta
+from telegram_bot import send_message, format_daily_report
+from config import ANTHROPIC_API_KEY
+import sqlite3
+
+DB_PATH = "signals.db"
+
+def get_signals_by_period(hours: int) -> list:
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    since = (datetime.utcnow() - timedelta(hours=hours)).isoformat()
+    c.execute("SELECT * FROM signals WHERE created_at >= ?", (since,))
+    rows = [dict(r) for r in c.fetchall()]
+    conn.close()
+    return rows
+
+def get_today_signals():
+    return get_signals_by_period(24)
+
+def get_week_signals():
+    return get_signals_by_period(168)
+
+def calc_stats(signals: list, label: str) -> dict:
+    wins   = [s for s in signals if s['status']=='CLOSED' and s['pnl_pct'] and s['pnl_pct']>0]
+    losses = [s for s in signals if s['status']=='CLOSED' and s['pnl_pct'] and s['pnl_pct']<0]
+    open_s = [s for s in signals if s['status']=='OPEN']
+    total_pnl = sum(s['pnl_pct'] for s in signals if s['status']=='CLOSED' and s['pnl_pct'])
+    best_signal  = "—"
+    worst_signal = "—"
+    if wins:
+        best = max(wins, key=lambda x: x['pnl_pct'])
+        best_signal = f"#{best['signal_number']} {best['symbol']} (+{best['pnl_pct']:.2f}%)"
+    if losses:
+        worst = min(losses, key=lambda x: x['pnl_pct'])
+        worst_signal = f"#{worst['signal_number']} {worst['symbol']} ({worst['pnl_pct']:.2f}%)"
+    return {
+        'date':         label,
+        'total':        len(signals),
+        'wins':         len(wins),
+        'losses':       len(losses),
+        'open':         len(open_s),
+        'total_pnl':    round(total_pnl, 2),
+        'best_signal':  best_signal,
+        'worst_signal': worst_signal,
+        'signals':      signals,
+    }
+
+def get_daily_stats():
+    return calc_stats(get_today_signals(), date.today().strftime("%Y-%m-%d"))
+
+def get_weekly_stats():
+    from_date = (date.today() - timedelta(days=7)).strftime("%Y-%m-%d")
+    to_date   = date.today().strftime("%Y-%m-%d")
+    return calc_stats(get_week_signals(), f"{from_date} → {to_date}")
+
+def build_daily_prompt(stats: dict) -> str:
+    losing = [s for s in stats['signals'] if s['status']=='CLOSED' and s['pnl_pct'] and s['pnl_pct']<0]
+    if not losing:
+        return ""
+    lines = []
+    lines.append("أنت خبير تحليل تقني متخصص في فيبوناتشي وSMC.")
+    lines.append("حلل الإشارات الخاسرة التالية وحدد الأخطاء:\n")
+    for s in losing:
+        lines.append(f"""
+إشارة #{s['signal_number']}:
+- العملة: {s['symbol']} | السوق: {s['market_type']} | الاتجاه: {s['direction']}
+- دخول: {s['entry_price']} | SL: {s['sl']} | TP1: {s['tp1']} | TP2: {s['tp2']} | TP3: {s['tp3']}
+- Swing High: {s['swing_high']} | Swing Low: {s['swing_low']}
+- R:R: 1:{s['rr']} | الخسارة: {s['pnl_pct']}%
+- الشارت: {s['tradingview_url']}
+""")
+    lines.append("""
+المطلوب بالعربية (نقاط مختصرة):
+1. الأخطاء الشائعة
+2. مشكلة في الاتجاه أو الدخول أو وقف الخسارة؟
+3. توصيات عملية
+""")
+    return "\n".join(lines)
+
+def build_weekly_prompt(stats: dict) -> str:
+    signals  = stats['signals']
+    closed   = [s for s in signals if s['status'] == 'CLOSED' and s['pnl_pct']]
+    wins     = [s for s in closed if s['pnl_pct'] > 0]
+    losses   = [s for s in closed if s['pnl_pct'] < 0]
+    win_rate = round(len(wins) / len(closed) * 100, 1) if closed else 0
+    symbol_stats = {}
+    for s in closed:
+        sym = s['symbol']
+        if sym not in symbol_stats:
+            symbol_stats[sym] = {'wins': 0, 'losses': 0, 'pnl': 0}
+        if s['pnl_pct'] > 0:
+            symbol_stats[sym]['wins'] += 1
+        else:
+            symbol_stats[sym]['losses'] += 1
+        symbol_stats[sym]['pnl'] += s['pnl_pct']
+    best_symbols  = sorted(symbol_stats.items(), key=lambda x: x[1]['pnl'], reverse=True)[:3]
+    worst_symbols = sorted(symbol_stats.items(), key=lambda x: x[1]['pnl'])[:3]
+    long_trades  = [s for s in closed if s['direction'] == 'LONG']
+    short_trades = [s for s in closed if s['direction'] == 'SHORT']
+    long_wr  = round(len([s for s in long_trades if s['pnl_pct'] > 0]) / len(long_trades) * 100, 1) if long_trades else 0
+    short_wr = round(len([s for s in short_trades if s['pnl_pct'] > 0]) / len(short_trades) * 100, 1) if short_trades else 0
+    prompt = f"""أنت خبير تحليل تقني متخصص في استراتيجية فيبوناتشي OTE.
+حلل أداء بوت التداول هذا الأسبوع وقدم توصيات تطويرية:
+
+📊 إحصائيات الأسبوع:
+- إجمالي الإشارات: {stats['total']}
+- الصفقات المغلقة: {len(closed)}
+- Win Rate: {win_rate}%
+- إجمالي PnL: {stats['total_pnl']}%
+- LONG Win Rate: {long_wr}% ({len(long_trades)} صفقة)
+- SHORT Win Rate: {short_wr}% ({len(short_trades)} صفقة)
+
+🏆 أفضل العملات:
+{chr(10).join([f"- {s[0]}: PnL {s[1]['pnl']:.2f}% ({s[1]['wins']}ربح/{s[1]['losses']}خسارة)" for s in best_symbols])}
+
+💔 أسوأ العملات:
+{chr(10).join([f"- {s[0]}: PnL {s[1]['pnl']:.2f}% ({s[1]['wins']}ربح/{s[1]['losses']}خسارة)" for s in worst_symbols])}
+
+المطلوب بالعربية:
+1. تقييم الأداء العام هذا الأسبوع
+2. هل هناك مشكلة في LONG أم SHORT أم كليهما؟
+3. العملات التي يجب استبعادها مؤقتاً وسبب ذلك
+4. اقتراح تعديلات محددة على المعاملات (مثل تغيير MIN_RR أو OTE Zone أو EMA)
+5. كيفية تطبيق كل تعديل في الكود (اذكر اسم المتغير والقيمة الجديدة)
+
+كن محدداً وعملياً - المستخدم سيطبق هذه التعديلات يدوياً في GitHub.
+"""
+    return prompt
+
+def analyze_with_claude(prompt: str) -> str:
+    try:
+        client   = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        response = client.messages.create(
+            model="claude-opus-4-5",
+            max_tokens=2000,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return response.content[0].text
+    except Exception as e:
+        print(f"Claude API error: {e}")
+        return "⚠️ تعذر الحصول على تحليل كلود"
+
+def format_weekly_report(stats: dict, claude_analysis: str) -> str:
+    wins     = stats['wins']
+    losses   = stats['losses']
+    total    = stats['total']
+    win_rate = round(wins / total * 100, 1) if total > 0 else 0
+    is_positive = stats['total_pnl'] >= 0
+    header   = "📊✅" if is_positive else "📊❌"
+    pnl_str  = f"+{stats['total_pnl']:.2f}%" if is_positive else f"{stats['total_pnl']:.2f}%"
+    msg = f"""
+{header} <b>التقرير الأسبوعي</b>
+━━━━━━━━━━━━━━━━━━━━━
+📅 {stats['date']}
+
+<b>ملخص الأسبوع:</b>
+  📨 إجمالي الإشارات: {total}
+  ✅ الرابحة: {wins}
+  ❌ الخاسرة: {losses}
+  ⏳ المفتوحة: {stats['open']}
+  🎯 نسبة الفوز: {win_rate}%
+
+<b>الأداء المالي:</b>
+  💰 إجمالي PnL: {pnl_str}
+  📈 أفضل إشارة: {stats['best_signal']}
+  📉 أسوأ إشارة: {stats['worst_signal']}
+━━━━━━━━━━━━━━━━━━━━━
+🤖 <b>تحليل وتوصيات كلود AI:</b>
+
+{claude_analysis}
+━━━━━━━━━━━━━━━━━━━━━
+""".strip()
+    return msg
+
+def send_daily_report():
+    print("Generating daily report...")
+    stats       = get_daily_stats()
+    is_negative = stats['total_pnl'] < 0 or stats['losses'] > stats['wins']
+    claude_analysis = None
+    if is_negative and stats['losses'] > 0:
+        prompt = build_daily_prompt(stats)
+        if prompt:
+            claude_analysis = analyze_with_claude(prompt)
+    msg = format_daily_report(stats, claude_analysis)
+    send_message(msg)
+    print("Daily report sent.")
+
+def send_weekly_report():
+    print("Generating weekly report...")
+    stats  = get_weekly_stats()
+    if stats['total'] == 0:
+        send_message("📊 <b>التقرير الأسبوعي</b>\n\nلا توجد إشارات هذا الأسبوع.")
+        return
+    prompt   = build_weekly_prompt(stats)
+    analysis = analyze_with_claude(prompt)
+    msg      = format_weekly_report(stats, analysis)
+    send_message(msg)
+    print("Weekly report sent.")
