@@ -13,4 +13,4 @@ ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 ENABLE_FUTURES_TRADING = True
 ENABLE_SPOT_TRADING    = True
 
-MAX_LEVERAGE = int(os.environ.get("MAX_LEVERAGE", "5"))
+MAX_LEVERAGE = int(os.environ.get("MAX_LEVERAGE", "1"))
