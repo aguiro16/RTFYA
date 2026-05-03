@@ -6,3 +6,4 @@ pandas
 numpy
 pytz==2024.1
 psycopg2-binary
+python-binance==1.0.19
