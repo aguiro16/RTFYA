@@ -11,6 +11,6 @@ TELEGRAM_CHAT_ID  = os.environ.get("TELEGRAM_CHAT_ID", "")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
 ENABLE_FUTURES_TRADING = True
-ENABLE_SPOT_TRADING    = True
+ENABLE_SPOT_TRADING    = False
 
 MAX_LEVERAGE = int(os.environ.get("MAX_LEVERAGE", "1"))
