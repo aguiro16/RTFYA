@@ -171,7 +171,8 @@ def place_futures_order_and_sltp(symbol: str, direction: str, qty: float,
            type="STOP_MARKET",
            stopPrice=sl_price,
            closePosition=True,
-           workingType="MARK_PRICE"
+           workingType="CONTRACT_PRICE",
+           priceProtect=False
        )
        log.info(f"SL order: {sl_order.get('orderId')} ✅")
 
@@ -182,7 +183,8 @@ def place_futures_order_and_sltp(symbol: str, direction: str, qty: float,
            type="TAKE_PROFIT_MARKET",
            stopPrice=tp_price,
            closePosition=True,
-           workingType="MARK_PRICE"
+           workingType="CONTRACT_PRICE",
+           priceProtect=False
        )
        log.info(f"TP order: {tp_order.get('orderId')} ✅")
 
