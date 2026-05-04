@@ -178,7 +178,7 @@ def analyze_symbol(symbol, market_type):
 def scan_all_markets():
     results = []
     seen    = set()
-    for market_type in ["FUTURES", "SPOT"]:
+    for market_type in ["FUTURES"]:
         symbols = get_top_symbols(market_type, limit=60)
         print(f"Scanning {len(symbols)} {market_type} symbols...")
         for symbol in symbols:
