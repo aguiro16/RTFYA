@@ -1,9 +1,4 @@
-import time
-import hmac
-import hashlib
 import logging
-import requests as req
-from urllib.parse import urlencode
 from binance.client import Client
 from binance.exceptions import BinanceAPIException
 from config import (
@@ -27,28 +22,6 @@ def get_client() -> Client:
    if _client is None:
        _client = Client(BINANCE_API_KEY, BINANCE_API_SECRET)
    return _client
-
-# ─── إرسال أمر Futures مباشرة عبر requests ────────────────────────────────────
-def _futures_order(params: dict) -> dict:
-   params["timestamp"] = int(time.time() * 1000)
-   query = urlencode(params)
-   sig = hmac.new(
-       BINANCE_API_SECRET.encode("utf-8"),
-       query.encode("utf-8"),
-       hashlib.sha256
-   ).hexdigest()
-   params["signature"] = sig
-   url = f"{BINANCE_FUTURES_BASE_URL}/fapi/v1/order"
-   headers = {"X-MBX-APIKEY": BINANCE_API_KEY}
-   resp = req.post(url, headers=headers, data=params, timeout=15)
-   try:
-       data = resp.json()
-   except Exception:
-       log.error(f"Failed to parse response: status={resp.status_code} body={resp.text[:200]}")
-       return {}
-   if "orderId" not in data:
-       log.error(f"Order error: {data}")
-   return data
 
 # ─── Cache لمعلومات الرموز ─────────────────────────────────────────────────────
 _futures_symbol_cache = {}
@@ -169,9 +142,12 @@ def set_leverage(symbol: str, leverage: int) -> bool:
 def place_futures_order_and_sltp(symbol: str, direction: str, qty: float,
                                  sl: float, tp: float) -> dict:
    try:
-       side    = "BUY"  if direction == "LONG" else "SELL"
-       sl_side = "SELL" if direction == "LONG" else "BUY"
-       tp_side = "SELL" if direction == "LONG" else "BUY"
+       client = get_client()
+
+       position_side = "LONG" if direction == "LONG" else "SHORT"
+       side          = "BUY"  if direction == "LONG" else "SELL"
+       sl_side       = "SELL" if direction == "LONG" else "BUY"
+       tp_side       = "SELL" if direction == "LONG" else "BUY"
 
        info      = get_symbol_info_futures(symbol)
        tick_size = info["tickSize"]
@@ -181,60 +157,63 @@ def place_futures_order_and_sltp(symbol: str, direction: str, qty: float,
        log.info(f"Opening {direction} {symbol} qty={qty} SL={sl_price} TP={tp_price}")
 
        # ─── فتح المركز ───────────────────────────────────────────────────────
-       order = _futures_order({
-           "symbol":   symbol,
-           "side":     side,
-           "type":     "MARKET",
-           "quantity": qty,
-       })
-       log.info(f"Market order: {order.get('orderId')}")
+       order = client.futures_create_order(
+           symbol=symbol,
+           side=side,
+           positionSide=position_side,
+           type="MARKET",
+           quantity=qty
+       )
+       log.info(f"Market order: {order.get('orderId')} ✅")
 
-       if "orderId" not in order:
+       if not order.get("orderId"):
            log.error(f"❌ Market order failed for {symbol}")
            return {}
 
        # ─── وقف الخسارة ──────────────────────────────────────────────────────
-       sl_order = _futures_order({
-           "symbol":        symbol,
-           "side":          sl_side,
-           "type":          "STOP_MARKET",
-           "stopPrice":     sl_price,
-           "closePosition": "true",
-           "workingType":   "MARK_PRICE",
-       })
+       sl_order = client.futures_create_order(
+           symbol=symbol,
+           side=sl_side,
+           positionSide=position_side,
+           type="STOP_MARKET",
+           stopPrice=str(sl_price),
+           closePosition="true",
+           workingType="MARK_PRICE"
+       )
 
-       if "orderId" not in sl_order:
+       if not sl_order.get("orderId"):
            log.error(f"❌ SL failed for {symbol} - closing position!")
-           _futures_order({
-               "symbol":     symbol,
-               "side":       sl_side,
-               "type":       "MARKET",
-               "quantity":   qty,
-               "reduceOnly": "true",
-           })
+           client.futures_create_order(
+               symbol=symbol,
+               side=sl_side,
+               positionSide=position_side,
+               type="MARKET",
+               quantity=qty
+           )
            return {}
 
        log.info(f"SL order: {sl_order.get('orderId')} ✅")
 
        # ─── هدف الربح ────────────────────────────────────────────────────────
-       tp_order = _futures_order({
-           "symbol":        symbol,
-           "side":          tp_side,
-           "type":          "TAKE_PROFIT_MARKET",
-           "stopPrice":     tp_price,
-           "closePosition": "true",
-           "workingType":   "MARK_PRICE",
-       })
+       tp_order = client.futures_create_order(
+           symbol=symbol,
+           side=tp_side,
+           positionSide=position_side,
+           type="TAKE_PROFIT_MARKET",
+           stopPrice=str(tp_price),
+           closePosition="true",
+           workingType="MARK_PRICE"
+       )
 
-       if "orderId" not in tp_order:
+       if not tp_order.get("orderId"):
            log.error(f"❌ TP failed for {symbol} - closing position!")
-           _futures_order({
-               "symbol":     symbol,
-               "side":       tp_side,
-               "type":       "MARKET",
-               "quantity":   qty,
-               "reduceOnly": "true",
-           })
+           client.futures_create_order(
+               symbol=symbol,
+               side=tp_side,
+               positionSide=position_side,
+               type="MARKET",
+               quantity=qty
+           )
            return {}
 
        log.info(f"TP order: {tp_order.get('orderId')} ✅")
