@@ -32,32 +32,38 @@ def format_execution_message(signal: dict, exec_result: dict) -> str:
         )
 
 def run_scan():
+    import gc
     print("Running market scan...")
-    signals = scan_all_markets()
-    for signal in signals:
-        key = f"{signal['symbol']}_{signal['market_type']}_{signal['direction']}"
-        if key in active_symbols:
-            continue
+    try:
+        signals = scan_all_markets()
+        for signal in signals:
+            key = f"{signal['symbol']}_{signal['market_type']}_{signal['direction']}"
+            if key in active_symbols:
+                continue
 
-        signal['signal_number'] = get_next_signal_number()
-        save_signal(signal)
+            signal['signal_number'] = get_next_signal_number()
+            save_signal(signal)
 
-        msg = format_signal_message(signal)
-        message_id = send_message(msg)
-        if message_id:
-            update_signal_message_id(signal['signal_number'], message_id)
+            msg = format_signal_message(signal)
+            message_id = send_message(msg)
+            if message_id:
+                update_signal_message_id(signal['signal_number'], message_id)
 
-        active_symbols.add(key)
-        print(f"Signal #{signal['signal_number']} sent: {signal['symbol']} {signal['direction']}")
+            active_symbols.add(key)
+            print(f"Signal #{signal['signal_number']} sent: {signal['symbol']} {signal['direction']}")
 
-        should_execute = (
-            (signal['market_type'] == 'FUTURES' and ENABLE_FUTURES_TRADING) or
-            (signal['market_type'] == 'SPOT'    and ENABLE_SPOT_TRADING)
-        )
-        if should_execute:
-            exec_result = execute_signal(signal)
-            exec_msg    = format_execution_message(signal, exec_result)
-            send_message(exec_msg)
+            should_execute = (
+                (signal['market_type'] == 'FUTURES' and ENABLE_FUTURES_TRADING) or
+                (signal['market_type'] == 'SPOT'    and ENABLE_SPOT_TRADING)
+            )
+            if should_execute:
+                exec_result = execute_signal(signal)
+                exec_msg    = format_execution_message(signal, exec_result)
+                send_message(exec_msg)
+    except Exception as e:
+        print(f"Error in run_scan: {e}")
+    finally:
+        gc.collect()
 
 def cleanup_active_symbols():
     open_signals = get_open_signals()
@@ -84,7 +90,7 @@ def main():
     send_message(
         "🚀 <b>بوت التداول الآلي يعمل الآن!</b>\n"
         "📊 يراقب أعلى 60 عملة\n"
-        "⏰ فحص كل 15 دقيقة\n"
+        "⏰ فحص كل 4 ساعات\n"
         "⚡ <b>التداول الآلي:</b>\n" +
         "\n".join(trading_status)
     )
@@ -93,9 +99,8 @@ def main():
 
     scheduler.add_job(
         run_scan,
-        IntervalTrigger(minutes=15),
-        id="market_scan",
-        next_run_time=datetime.datetime.utcnow()
+        IntervalTrigger(hours=4),
+        id="market_scan"
     )
     scheduler.add_job(
         monitor_open_signals,
