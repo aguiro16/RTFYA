@@ -38,9 +38,9 @@ def _futures_order(params: dict) -> dict:
        hashlib.sha256
    ).hexdigest()
    params["signature"] = sig
-   url = f"{BINANCE_FUTURES_BASE_URL}/fapi/v2/order"
+   url = f"{BINANCE_FUTURES_BASE_URL}/fapi/v1/order"
    headers = {"X-MBX-APIKEY": BINANCE_API_KEY}
-   resp = req.post(url, headers=headers, params=params, timeout=15)
+   resp = req.post(url, headers=headers, data=params, timeout=15)
    try:
        data = resp.json()
    except Exception:
