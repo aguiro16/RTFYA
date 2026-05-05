@@ -1,5 +1,9 @@
 import time
+import hmac
+import hashlib
 import logging
+import requests as req
+from urllib.parse import urlencode
 from binance.client import Client
 from binance.exceptions import BinanceAPIException
 from config import (
@@ -23,6 +27,24 @@ def get_client() -> Client:
    if _client is None:
        _client = Client(BINANCE_API_KEY, BINANCE_API_SECRET)
    return _client
+
+# ─── إرسال أمر Futures مباشرة عبر requests ────────────────────────────────────
+def _futures_order(params: dict) -> dict:
+   params["timestamp"] = int(time.time() * 1000)
+   query = urlencode(params)
+   sig = hmac.new(
+       BINANCE_API_SECRET.encode("utf-8"),
+       query.encode("utf-8"),
+       hashlib.sha256
+   ).hexdigest()
+   params["signature"] = sig
+   url = f"{BINANCE_FUTURES_BASE_URL}/fapi/v1/order"
+   headers = {"X-MBX-APIKEY": BINANCE_API_KEY}
+   resp = req.post(url, headers=headers, params=params, timeout=15)
+   data = resp.json()
+   if "orderId" not in data:
+       log.error(f"Order error: {data}")
+   return data
 
 # ─── Cache لمعلومات الرموز ─────────────────────────────────────────────────────
 _futures_symbol_cache = {}
@@ -143,7 +165,6 @@ def set_leverage(symbol: str, leverage: int) -> bool:
 def place_futures_order_and_sltp(symbol: str, direction: str, qty: float,
                                  sl: float, tp: float) -> dict:
    try:
-       client = get_client()
        side    = "BUY"  if direction == "LONG" else "SELL"
        sl_side = "SELL" if direction == "LONG" else "BUY"
        tp_side = "SELL" if direction == "LONG" else "BUY"
@@ -156,42 +177,39 @@ def place_futures_order_and_sltp(symbol: str, direction: str, qty: float,
        log.info(f"Opening {direction} {symbol} qty={qty} SL={sl_price} TP={tp_price}")
 
        # ─── فتح المركز ───────────────────────────────────────────────────────
-       order = client.futures_create_order(
-           symbol=symbol,
-           side=side,
-           type="MARKET",
-           quantity=qty
-       )
+       order = _futures_order({
+           "symbol":   symbol,
+           "side":     side,
+           "type":     "MARKET",
+           "quantity": qty,
+       })
        log.info(f"Market order: {order.get('orderId')}")
 
+       if "orderId" not in order:
+           return {}
+
        # ─── وقف الخسارة ──────────────────────────────────────────────────────
-       sl_order = client.futures_create_order(
-           symbol=symbol,
-           side=sl_side,
-           type="STOP_MARKET",
-           stopPrice=sl_price,
-           closePosition=True,
-           workingType="CONTRACT_PRICE",
-           priceProtect=False
-       )
+       sl_order = _futures_order({
+           "symbol":        symbol,
+           "side":          sl_side,
+           "type":          "STOP_MARKET",
+           "stopPrice":     sl_price,
+           "closePosition": "true",
+       })
        log.info(f"SL order: {sl_order.get('orderId')} ✅")
 
        # ─── هدف الربح ────────────────────────────────────────────────────────
-       tp_order = client.futures_create_order(
-           symbol=symbol,
-           side=tp_side,
-           type="TAKE_PROFIT_MARKET",
-           stopPrice=tp_price,
-           closePosition=True,
-           workingType="CONTRACT_PRICE",
-           priceProtect=False
-       )
+       tp_order = _futures_order({
+           "symbol":        symbol,
+           "side":          tp_side,
+           "type":          "TAKE_PROFIT_MARKET",
+           "stopPrice":     tp_price,
+           "closePosition": "true",
+       })
        log.info(f"TP order: {tp_order.get('orderId')} ✅")
 
        return order
 
-   except BinanceAPIException as e:
-       log.error(f"Binance API error {symbol}: code={e.status_code} msg={e.message}")
    except Exception as e:
        import traceback
        log.error(f"Futures order error {symbol}: {traceback.format_exc()}")
@@ -238,7 +256,6 @@ def execute_signal(signal: dict) -> dict:
        "error":       None
    }
 
-   # ─── Futures ──────────────────────────────────────────────────────────────
    if market_type == "FUTURES":
        if not ENABLE_FUTURES_TRADING:
            result["error"] = "Futures trading disabled"
@@ -266,7 +283,6 @@ def execute_signal(signal: dict) -> dict:
        else:
            result["error"] = "Order failed"
 
-   # ─── Spot ─────────────────────────────────────────────────────────────────
    elif market_type == "SPOT":
        if not ENABLE_SPOT_TRADING:
            result["error"] = "Spot trading disabled"
