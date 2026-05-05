@@ -29,7 +29,7 @@ def get_client() -> Client:
    return _client
 
 # ─── إرسال أمر Futures مباشرة عبر requests ────────────────────────────────────
-def _futures_order(params: dict) -> dict:
+def _futures_order(params: dict, algo: bool = False) -> dict:
    params["timestamp"] = int(time.time() * 1000)
    query = urlencode(params)
    sig = hmac.new(
@@ -38,7 +38,12 @@ def _futures_order(params: dict) -> dict:
        hashlib.sha256
    ).hexdigest()
    params["signature"] = sig
-   url = f"{BINANCE_FUTURES_BASE_URL}/fapi/v1/order"
+
+   if algo:
+       url = f"{BINANCE_FUTURES_BASE_URL}/fapi/v1/order/algo/order"
+   else:
+       url = f"{BINANCE_FUTURES_BASE_URL}/fapi/v1/order"
+
    headers = {"X-MBX-APIKEY": BINANCE_API_KEY}
    resp = req.post(url, headers=headers, params=params, timeout=15)
    data = resp.json()
@@ -186,6 +191,7 @@ def place_futures_order_and_sltp(symbol: str, direction: str, qty: float,
        log.info(f"Market order: {order.get('orderId')}")
 
        if "orderId" not in order:
+           log.error(f"❌ Market order failed for {symbol}, aborting SL/TP")
            return {}
 
        # ─── وقف الخسارة ──────────────────────────────────────────────────────
@@ -195,7 +201,19 @@ def place_futures_order_and_sltp(symbol: str, direction: str, qty: float,
            "type":          "STOP_MARKET",
            "stopPrice":     sl_price,
            "closePosition": "true",
-       })
+       }, algo=True)
+
+       if "orderId" not in sl_order:
+           log.error(f"❌ SL order failed for {symbol} - closing position!")
+           _futures_order({
+               "symbol":     symbol,
+               "side":       sl_side,
+               "type":       "MARKET",
+               "quantity":   qty,
+               "reduceOnly": "true",
+           })
+           return {}
+
        log.info(f"SL order: {sl_order.get('orderId')} ✅")
 
        # ─── هدف الربح ────────────────────────────────────────────────────────
@@ -205,7 +223,19 @@ def place_futures_order_and_sltp(symbol: str, direction: str, qty: float,
            "type":          "TAKE_PROFIT_MARKET",
            "stopPrice":     tp_price,
            "closePosition": "true",
-       })
+       }, algo=True)
+
+       if "orderId" not in tp_order:
+           log.error(f"❌ TP order failed for {symbol} - closing position!")
+           _futures_order({
+               "symbol":     symbol,
+               "side":       tp_side,
+               "type":       "MARKET",
+               "quantity":   qty,
+               "reduceOnly": "true",
+           })
+           return {}
+
        log.info(f"TP order: {tp_order.get('orderId')} ✅")
 
        return order
