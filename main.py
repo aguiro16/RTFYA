@@ -90,7 +90,7 @@ def main():
     send_message(
         "🚀 <b>بوت التداول الآلي يعمل الآن!</b>\n"
         "📊 يراقب أعلى 60 عملة\n"
-        "⏰ فحص كل 4 ساعات\n"
+        "⏰ فحص كل 15 دقيقة\n"
         "⚡ <b>التداول الآلي:</b>\n" +
         "\n".join(trading_status)
     )
@@ -99,8 +99,9 @@ def main():
 
     scheduler.add_job(
         run_scan,
-        IntervalTrigger(hours=4),
-        id="market_scan"
+        IntervalTrigger(minutes=15),
+        id="market_scan",
+        next_run_time=datetime.datetime.now(pytz.utc)
     )
     scheduler.add_job(
         monitor_open_signals,
