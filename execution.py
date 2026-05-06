@@ -260,7 +260,7 @@ def execute_signal(signal: dict) -> dict:
    entry_price = signal["entry_price"]
    market_type = signal["market_type"]
    sl          = signal["sl"]
-   tp          = signal["tp3"]
+   tp          = signal["tp1"]  # ← تم التغيير من tp3 إلى tp1
 
    result = {
        "executed":    False,
