@@ -137,6 +137,11 @@ def set_leverage(symbol: str, leverage: int) -> bool:
        log.error(f"Leverage error: {e}")
    return False
 
+# ─── فحص نجاح الأمر (يقبل orderId أو algoId) ─────────────────────────────────
+
+def _order_success(order: dict) -> bool:
+   return bool(order.get("orderId") or order.get("algoId"))
+
 # ─── تنفيذ Futures ────────────────────────────────────────────────────────────
 
 def place_futures_order_and_sltp(symbol: str, direction: str, qty: float,
@@ -181,7 +186,7 @@ def place_futures_order_and_sltp(symbol: str, direction: str, qty: float,
            workingType="MARK_PRICE"
        )
 
-       if not sl_order.get("orderId"):
+       if not _order_success(sl_order):
            log.error(f"❌ SL failed for {symbol} - closing position!")
            client.futures_create_order(
                symbol=symbol,
@@ -192,7 +197,7 @@ def place_futures_order_and_sltp(symbol: str, direction: str, qty: float,
            )
            return {}
 
-       log.info(f"SL order: {sl_order.get('orderId')} ✅")
+       log.info(f"SL order: {sl_order.get('orderId') or sl_order.get('algoId')} ✅")
 
        # ─── هدف الربح ────────────────────────────────────────────────────────
        tp_order = client.futures_create_order(
@@ -205,7 +210,7 @@ def place_futures_order_and_sltp(symbol: str, direction: str, qty: float,
            workingType="MARK_PRICE"
        )
 
-       if not tp_order.get("orderId"):
+       if not _order_success(tp_order):
            log.error(f"❌ TP failed for {symbol} - closing position!")
            client.futures_create_order(
                symbol=symbol,
@@ -216,7 +221,7 @@ def place_futures_order_and_sltp(symbol: str, direction: str, qty: float,
            )
            return {}
 
-       log.info(f"TP order: {tp_order.get('orderId')} ✅")
+       log.info(f"TP order: {tp_order.get('orderId') or tp_order.get('algoId')} ✅")
 
        return order
 
