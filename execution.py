@@ -260,7 +260,7 @@ def execute_signal(signal: dict) -> dict:
    entry_price = signal["entry_price"]
    market_type = signal["market_type"]
    sl          = signal["sl"]
-   tp          = signal["tp1"]  # ← تم التغيير من tp3 إلى tp1
+   tp          = signal["tp1"]
 
    result = {
        "executed":    False,
@@ -281,7 +281,7 @@ def execute_signal(signal: dict) -> dict:
            result["error"] = f"Insufficient futures balance: {balance} USDT"
            return result
 
-       usdt_to_use = round(balance * 0.10, 2)
+       usdt_to_use = 100.0  # ← مبلغ ثابت 100 USDT لكل صفقة
        qty = calc_quantity(symbol, entry_price, usdt_to_use * MAX_LEVERAGE, market_type)
        if qty == 0:
            result["error"] = "Quantity too small"
@@ -317,7 +317,7 @@ def execute_signal(signal: dict) -> dict:
            result["error"] = f"Insufficient spot balance: {balance} USDT"
            return result
 
-       usdt_to_use = round(balance * 0.10, 2)
+       usdt_to_use = 100.0  # ← مبلغ ثابت 100 USDT لكل صفقة
        qty = calc_quantity(symbol, entry_price, usdt_to_use, market_type)
        if qty == 0:
            result["error"] = "Quantity too small"
