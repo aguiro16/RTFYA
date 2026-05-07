@@ -37,7 +37,8 @@ def run_scan():
     try:
         signals = scan_all_markets()
         for signal in signals:
-            key = f"{signal['symbol']}_{signal['market_type']}_{signal['direction']}"
+            # ← المفتاح يعتمد على الرمز والسوق فقط بدون الاتجاه
+            key = f"{signal['symbol']}_{signal['market_type']}"
             if key in active_symbols:
                 continue
 
@@ -67,7 +68,8 @@ def run_scan():
 
 def cleanup_active_symbols():
     open_signals = get_open_signals()
-    open_keys    = {f"{s['symbol']}_{s['market_type']}_{s['direction']}" for s in open_signals}
+    # ← نفس المفتاح بدون الاتجاه
+    open_keys    = {f"{s['symbol']}_{s['market_type']}" for s in open_signals}
     closed_keys  = active_symbols - open_keys
     for k in closed_keys:
         active_symbols.discard(k)
