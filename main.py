@@ -35,11 +35,19 @@ def run_scan():
     import gc
     print("Running market scan...")
     try:
+        # ← تحميل الصفقات المفتوحة من قاعدة البيانات عند كل scan
+        open_signals = get_open_signals()
+        db_keys = {f"{s['symbol']}_{s['market_type']}" for s in open_signals}
+
+        # ← مزامنة active_symbols مع قاعدة البيانات
+        active_symbols.update(db_keys)
+
         signals = scan_all_markets()
         for signal in signals:
-            # ← المفتاح يعتمد على الرمز والسوق فقط بدون الاتجاه
             key = f"{signal['symbol']}_{signal['market_type']}"
-            if key in active_symbols:
+
+            # ← فحص الذاكرة وقاعدة البيانات معاً
+            if key in active_symbols or key in db_keys:
                 continue
 
             signal['signal_number'] = get_next_signal_number()
@@ -68,7 +76,6 @@ def run_scan():
 
 def cleanup_active_symbols():
     open_signals = get_open_signals()
-    # ← نفس المفتاح بدون الاتجاه
     open_keys    = {f"{s['symbol']}_{s['market_type']}" for s in open_signals}
     closed_keys  = active_symbols - open_keys
     for k in closed_keys:
@@ -80,6 +87,13 @@ def main():
     init_db()
 
     load_protected_coins()
+
+    # ← تحميل الصفقات المفتوحة عند بدء البوت
+    open_signals = get_open_signals()
+    for s in open_signals:
+        key = f"{s['symbol']}_{s['market_type']}"
+        active_symbols.add(key)
+    print(f"Loaded {len(active_symbols)} open signals from database.")
 
     trading_status = []
     if ENABLE_FUTURES_TRADING:
