@@ -1,10 +1,17 @@
 import requests
 import pandas as pd
 import numpy as np
+import gc
 from config import BINANCE_BASE_URL, BINANCE_FUTURES_BASE_URL
 
 STABLECOINS = {"USDC","BUSD","TUSD","DAI","FDUSD","USDP","GUSD","FRAX","LUSD","SUSD","AEUR","EURI","BFUSD"}
-MIN_RR      = 1.5
+
+# ─── إعدادات الفلترة ──────────────────────────────────────────────────────────
+MIN_RR_LONG  = 1.5   # نسبة المخاطرة للـ LONG
+MIN_RR_SHORT = 2.0   # نسبة أعلى للـ SHORT
+
+# ─── العملات المستبعدة ────────────────────────────────────────────────────────
+BLACKLIST = {"WLFIUSDT", "ZBTUSDT", "BZUSDT"}
 
 def get_top_symbols(market_type, limit=60):
     try:
@@ -19,6 +26,8 @@ def get_top_symbols(market_type, limit=60):
             if not sym.endswith("USDT"):
                 continue
             if sym[:-4] in STABLECOINS:
+                continue
+            if sym in BLACKLIST:  # ← فلتر الـ Blacklist
                 continue
             try:
                 volume = float(t["quoteVolume"])
@@ -48,6 +57,7 @@ def get_klines(symbol, interval, limit, market_type):
             'time','open','high','low','close','volume',
             'close_time','quote_vol','trades','taker_buy_base','taker_buy_quote','ignore'
         ])
+        df = df[['time','open','high','low','close','volume']].copy()
         for col in ['open','high','low','close','volume']:
             df[col] = df[col].astype(float)
         df['time'] = pd.to_datetime(df['time'], unit='ms')
@@ -126,6 +136,7 @@ def build_tv_url(symbol):
     return f"https://www.tradingview.com/chart/?symbol=BINANCE:{symbol}&interval=60"
 
 def analyze_symbol(symbol, market_type):
+    df_4h = df_1h = df_15m = None
     try:
         df_4h  = get_klines(symbol, "4h",  200, market_type)
         df_1h  = get_klines(symbol, "1h",  100, market_type)
@@ -150,8 +161,12 @@ def analyze_symbol(symbol, market_type):
         if risk == 0:
             return None
         rr = round(abs(fib['tp3'] - price) / risk, 2)
-        if rr < MIN_RR:
+
+        # ← فلتر MIN_RR حسب الاتجاه
+        min_rr = MIN_RR_LONG if direction == "LONG" else MIN_RR_SHORT
+        if rr < min_rr:
             return None
+
         wave_size = round((swing_high - swing_low) / swing_low * 100, 1)
         return {
             'symbol':          symbol,
@@ -174,6 +189,9 @@ def analyze_symbol(symbol, market_type):
     except Exception as e:
         print(f"Analyze error {symbol}: {e}")
         return None
+    finally:
+        del df_4h, df_1h, df_15m
+        gc.collect()
 
 def scan_all_markets():
     results = []
@@ -189,4 +207,5 @@ def scan_all_markets():
             if signal:
                 results.append(signal)
                 print(f"  Signal: {symbol} {market_type} {signal['direction']} RR:{signal['rr']}")
+    gc.collect()
     return results
