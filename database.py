@@ -36,7 +36,8 @@ def init_db():
            tradingview_url TEXT,
            created_at TEXT,
            closed_at TEXT,
-           raw_data TEXT
+           raw_data TEXT,
+           tp_reached TEXT DEFAULT ''
        )
    """)
    c.execute("""
@@ -46,6 +47,11 @@ def init_db():
        )
    """)
    c.execute("INSERT OR IGNORE INTO signal_counter (id, last_number) VALUES (1, 0)")
+   # ← إضافة عمود tp_reached إذا لم يكن موجوداً (للقواعد القديمة)
+   try:
+       c.execute("ALTER TABLE signals ADD COLUMN tp_reached TEXT DEFAULT ''")
+   except:
+       pass
    conn.commit()
    conn.close()
 
@@ -84,6 +90,19 @@ def update_signal_message_id(signal_number, message_id):
    c = conn.cursor()
    c.execute("UPDATE signals SET telegram_message_id=? WHERE signal_number=?",
              (message_id, signal_number))
+   conn.commit()
+   conn.close()
+
+def update_signal_tp_reached(signal_number, tp_level):
+   conn = get_conn()
+   c = conn.cursor()
+   c.execute("SELECT tp_reached FROM signals WHERE signal_number=?", (signal_number,))
+   row = c.fetchone()
+   current = row[0] if row and row[0] else ''
+   if tp_level not in current:
+       new_val = f"{current},{tp_level}".strip(',')
+       c.execute("UPDATE signals SET tp_reached=? WHERE signal_number=?",
+                 (new_val, signal_number))
    conn.commit()
    conn.close()
 
