@@ -6,33 +6,39 @@ import sqlite3
 
 DB_PATH = "/root/RTFYA/signals.db"
 
-def get_signals_closed_in_period(hours: int) -> list:
-    """جلب الإشارات المُغلقة في الفترة المحددة"""
+def get_closed_signals_in_period(hours: int) -> list:
+    """جلب الإشارات المُغلقة فقط في الفترة المحددة"""
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     c = conn.cursor()
     since = (datetime.utcnow() - timedelta(hours=hours)).isoformat()
-    # إشارات مُغلقة في الفترة + إشارات مفتوحة أُنشئت في الفترة
     c.execute("""
         SELECT * FROM signals
-        WHERE (status = 'CLOSED' AND closed_at >= ?)
-        OR (status = 'OPEN' AND created_at >= ?)
-    """, (since, since))
+        WHERE status = 'CLOSED' AND closed_at >= ?
+    """, (since,))
     rows = [dict(r) for r in c.fetchall()]
     conn.close()
     return rows
 
+def get_open_signals_count() -> int:
+    """عدد الإشارات المفتوحة حالياً"""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM signals WHERE status='OPEN'")
+    count = c.fetchone()[0]
+    conn.close()
+    return count
+
 def get_today_signals():
-    return get_signals_closed_in_period(24)
+    return get_closed_signals_in_period(24)
 
 def get_week_signals():
-    return get_signals_closed_in_period(168)
+    return get_closed_signals_in_period(168)
 
 def calc_stats(signals: list, label: str) -> dict:
-    wins   = [s for s in signals if s['status']=='CLOSED' and s['pnl_pct'] and s['pnl_pct']>0]
-    losses = [s for s in signals if s['status']=='CLOSED' and s['pnl_pct'] and s['pnl_pct']<0]
-    open_s = [s for s in signals if s['status']=='OPEN']
-    total_pnl = sum(s['pnl_pct'] for s in signals if s['status']=='CLOSED' and s['pnl_pct'])
+    wins      = [s for s in signals if s['pnl_pct'] and s['pnl_pct'] > 0]
+    losses    = [s for s in signals if s['pnl_pct'] and s['pnl_pct'] < 0]
+    total_pnl = sum(s['pnl_pct'] for s in signals if s['pnl_pct'])
     best_signal  = "—"
     worst_signal = "—"
     if wins:
@@ -46,7 +52,7 @@ def calc_stats(signals: list, label: str) -> dict:
         'total':        len(signals),
         'wins':         len(wins),
         'losses':       len(losses),
-        'open':         len(open_s),
+        'open':         get_open_signals_count(),
         'total_pnl':    round(total_pnl, 2),
         'best_signal':  best_signal,
         'worst_signal': worst_signal,
@@ -62,7 +68,7 @@ def get_weekly_stats():
     return calc_stats(get_week_signals(), f"{from_date} → {to_date}")
 
 def build_daily_prompt(stats: dict) -> str:
-    losing = [s for s in stats['signals'] if s['status']=='CLOSED' and s['pnl_pct'] and s['pnl_pct']<0]
+    losing = [s for s in stats['signals'] if s['pnl_pct'] and s['pnl_pct'] < 0]
     if not losing:
         return ""
     lines = []
@@ -86,33 +92,31 @@ def build_daily_prompt(stats: dict) -> str:
     return "\n".join(lines)
 
 def build_weekly_prompt(stats: dict) -> str:
-    signals  = stats['signals']
-    closed   = [s for s in signals if s['status'] == 'CLOSED' and s['pnl_pct']]
-    wins     = [s for s in closed if s['pnl_pct'] > 0]
-    losses   = [s for s in closed if s['pnl_pct'] < 0]
-    win_rate = round(len(wins) / len(closed) * 100, 1) if closed else 0
+    signals      = stats['signals']
+    wins         = [s for s in signals if s['pnl_pct'] and s['pnl_pct'] > 0]
+    losses       = [s for s in signals if s['pnl_pct'] and s['pnl_pct'] < 0]
+    win_rate     = round(len(wins) / len(signals) * 100, 1) if signals else 0
     symbol_stats = {}
-    for s in closed:
+    for s in signals:
         sym = s['symbol']
         if sym not in symbol_stats:
             symbol_stats[sym] = {'wins': 0, 'losses': 0, 'pnl': 0}
-        if s['pnl_pct'] > 0:
+        if s['pnl_pct'] and s['pnl_pct'] > 0:
             symbol_stats[sym]['wins'] += 1
         else:
             symbol_stats[sym]['losses'] += 1
-        symbol_stats[sym]['pnl'] += s['pnl_pct']
+        symbol_stats[sym]['pnl'] += s['pnl_pct'] or 0
     best_symbols  = sorted(symbol_stats.items(), key=lambda x: x[1]['pnl'], reverse=True)[:3]
     worst_symbols = sorted(symbol_stats.items(), key=lambda x: x[1]['pnl'])[:3]
-    long_trades  = [s for s in closed if s['direction'] == 'LONG']
-    short_trades = [s for s in closed if s['direction'] == 'SHORT']
-    long_wr  = round(len([s for s in long_trades if s['pnl_pct'] > 0]) / len(long_trades) * 100, 1) if long_trades else 0
-    short_wr = round(len([s for s in short_trades if s['pnl_pct'] > 0]) / len(short_trades) * 100, 1) if short_trades else 0
+    long_trades  = [s for s in signals if s['direction'] == 'LONG']
+    short_trades = [s for s in signals if s['direction'] == 'SHORT']
+    long_wr  = round(len([s for s in long_trades if s['pnl_pct'] and s['pnl_pct'] > 0]) / len(long_trades) * 100, 1) if long_trades else 0
+    short_wr = round(len([s for s in short_trades if s['pnl_pct'] and s['pnl_pct'] > 0]) / len(short_trades) * 100, 1) if short_trades else 0
     prompt = f"""أنت خبير تحليل تقني متخصص في استراتيجية فيبوناتشي OTE.
 حلل أداء بوت التداول هذا الأسبوع وقدم توصيات تطويرية:
 
 📊 إحصائيات الأسبوع:
-- إجمالي الإشارات: {stats['total']}
-- الصفقات المغلقة: {len(closed)}
+- إجمالي الإشارات المغلقة: {len(signals)}
 - Win Rate: {win_rate}%
 - إجمالي PnL: {stats['total_pnl']}%
 - LONG Win Rate: {long_wr}% ({len(long_trades)} صفقة)
@@ -162,10 +166,10 @@ def format_weekly_report(stats: dict, claude_analysis: str) -> str:
 📅 {stats['date']}
 
 <b>ملخص الأسبوع:</b>
- 📨 إجمالي الإشارات: {total}
+ 📨 إجمالي الإشارات المغلقة: {total}
  ✅ الرابحة: {wins}
  ❌ الخاسرة: {losses}
- ⏳ المفتوحة: {stats['open']}
+ ⏳ المفتوحة حالياً: {stats['open']}
  🎯 نسبة الفوز: {win_rate}%
 
 <b>الأداء المالي:</b>
@@ -197,7 +201,7 @@ def send_weekly_report():
     print("Generating weekly report...")
     stats  = get_weekly_stats()
     if stats['total'] == 0:
-        send_message("📊 <b>التقرير الأسبوعي</b>\n\nلا توجد إشارات هذا الأسبوع.")
+        send_message("📊 <b>التقرير الأسبوعي</b>\n\nلا توجد إشارات مغلقة هذا الأسبوع.")
         return
     prompt   = build_weekly_prompt(stats)
     analysis = analyze_with_claude(prompt)
