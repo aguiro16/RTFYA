@@ -7,8 +7,8 @@ from config import BINANCE_BASE_URL, BINANCE_FUTURES_BASE_URL
 STABLECOINS = {"USDC","BUSD","TUSD","DAI","FDUSD","USDP","GUSD","FRAX","LUSD","SUSD","AEUR","EURI","BFUSD"}
 
 # ─── إعدادات الفلترة ──────────────────────────────────────────────────────────
-MIN_RR_LONG  = 1.5   # نسبة المخاطرة للـ LONG
-MIN_RR_SHORT = 2.0   # نسبة أعلى للـ SHORT
+MIN_RR_LONG  = 1.5   # نسبة المخاطرة للـ LONG على TP1
+MIN_RR_SHORT = 2.0   # نسبة أعلى للـ SHORT على TP1
 
 # ─── العملات المستبعدة ────────────────────────────────────────────────────────
 BLACKLIST = {"WLFIUSDT", "ZBTUSDT", "BZUSDT"}
@@ -27,7 +27,7 @@ def get_top_symbols(market_type, limit=60):
                 continue
             if sym[:-4] in STABLECOINS:
                 continue
-            if sym in BLACKLIST:  # ← فلتر الـ Blacklist
+            if sym in BLACKLIST:
                 continue
             try:
                 volume = float(t["quoteVolume"])
@@ -160,7 +160,9 @@ def analyze_symbol(symbol, market_type):
         risk = abs(price - fib['sl'])
         if risk == 0:
             return None
-        rr = round(abs(fib['tp3'] - price) / risk, 2)
+
+        # ← R:R يُحسب على TP1 وليس TP3
+        rr = round(abs(fib['tp1'] - price) / risk, 2)
 
         # ← فلتر MIN_RR حسب الاتجاه
         min_rr = MIN_RR_LONG if direction == "LONG" else MIN_RR_SHORT
