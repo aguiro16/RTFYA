@@ -13,6 +13,9 @@ from telegram_bot import send_message, format_signal_message
 from execution import execute_signal, load_protected_coins
 from config import ENABLE_FUTURES_TRADING, ENABLE_SPOT_TRADING
 
+# ← الحد الأقصى للصفقات المفتوحة في نفس الوقت
+MAX_OPEN_POSITIONS = 3
+
 active_symbols = set()
 
 def format_execution_message(signal: dict, exec_result: dict) -> str:
@@ -35,18 +38,18 @@ def run_scan():
     import gc
     print("Running market scan...")
     try:
-        # ← تحميل الصفقات المفتوحة من قاعدة البيانات عند كل scan
         open_signals = get_open_signals()
         db_keys = {f"{s['symbol']}_{s['market_type']}" for s in open_signals}
-
-        # ← مزامنة active_symbols مع قاعدة البيانات
         active_symbols.update(db_keys)
+
+        # ← فحص الحد الأقصى للصفقات المفتوحة
+        current_open = len(open_signals)
+        if current_open >= MAX_OPEN_POSITIONS:
+            print(f"Max open positions reached ({current_open}/{MAX_OPEN_POSITIONS}). Skipping execution.")
 
         signals = scan_all_markets()
         for signal in signals:
             key = f"{signal['symbol']}_{signal['market_type']}"
-
-            # ← فحص الذاكرة وقاعدة البيانات معاً
             if key in active_symbols or key in db_keys:
                 continue
 
@@ -61,14 +64,24 @@ def run_scan():
             active_symbols.add(key)
             print(f"Signal #{signal['signal_number']} sent: {signal['symbol']} {signal['direction']}")
 
+            # ← لا ينفذ إذا وصل الحد الأقصى
             should_execute = (
                 (signal['market_type'] == 'FUTURES' and ENABLE_FUTURES_TRADING) or
                 (signal['market_type'] == 'SPOT'    and ENABLE_SPOT_TRADING)
             )
-            if should_execute:
+            if should_execute and current_open < MAX_OPEN_POSITIONS:
                 exec_result = execute_signal(signal)
                 exec_msg    = format_execution_message(signal, exec_result)
                 send_message(exec_msg)
+                if exec_result.get("executed"):
+                    current_open += 1  # ← تحديث العداد بعد كل تنفيذ
+            elif should_execute and current_open >= MAX_OPEN_POSITIONS:
+                send_message(
+                    f"⏸ <b>تم تأجيل التنفيذ</b>\n"
+                    f"📌 {signal['symbol']} | {signal['market_type']}\n"
+                    f"⚠️ الحد الأقصى للصفقات المفتوحة ({MAX_OPEN_POSITIONS}) وصل"
+                )
+
     except Exception as e:
         print(f"Error in run_scan: {e}")
     finally:
@@ -88,7 +101,6 @@ def main():
 
     load_protected_coins()
 
-    # ← تحميل الصفقات المفتوحة عند بدء البوت
     open_signals = get_open_signals()
     for s in open_signals:
         key = f"{s['symbol']}_{s['market_type']}"
@@ -107,6 +119,7 @@ def main():
         "🚀 <b>بوت التداول الآلي يعمل الآن!</b>\n"
         "📊 يراقب أعلى 60 عملة\n"
         "⏰ فحص كل 15 دقيقة\n"
+        f"📊 الحد الأقصى للصفقات: {MAX_OPEN_POSITIONS}\n"
         "⚡ <b>التداول الآلي:</b>\n" +
         "\n".join(trading_status)
     )
